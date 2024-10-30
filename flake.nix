@@ -64,7 +64,7 @@
 
         probe = pkgs.writeScriptBin "run-stm32" ''
           #!${pkgs.bash}/bin/bash
-          exec ${pkgs.probe-rs-tools}/bin/probe-rs run --chip STM32F407VGTx ${my-crate}/bin/stm32
+          exec ${pkgs.probe-rs-tools}/bin/probe-rs run --chip STM32F407VGTx --connect-under-reset ${my-crate}/bin/stm32
         '';
       in
       rec {
