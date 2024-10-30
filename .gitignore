@@ -1,0 +1,17 @@
+/*
+/**
+
+!README.md
+!LICENSE
+!.gitignore
+
+!flake.*
+
+!Cargo.*
+!src/
+!src/**/*.rs
+!memory.x
+!build.rs
+!.cargo/
+!.cargo/config.toml
+!rust-analyzer.toml

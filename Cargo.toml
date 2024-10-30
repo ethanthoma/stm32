@@ -1,0 +1,15 @@
+[package]
+name = "stm32"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.3"
+panic-halt = "1.0.0"
+
+[dependencies.stm32f4]
+version = "0.15.1"
+features = ["stm32f407", "rt"]
+
+build = "build.rs"
