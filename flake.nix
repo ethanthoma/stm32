@@ -61,6 +61,11 @@
             rm -rf $out/src/bin/crane-dummy-*
           '';
         };
+
+        probe = pkgs.writeScriptBin "run-stm32" ''
+          #!${pkgs.bash}/bin/bash
+          exec ${pkgs.probe-rs-tools}/bin/probe-rs run --chip STM32F407VGTx ${my-crate}/bin/stm32
+        '';
       in
       rec {
         checks = {
@@ -77,6 +82,11 @@
             drv = my-crate;
           };
           default = apps.${name};
+
+          probe = flake-utils.lib.mkApp {
+            drv = probe;
+            name = "run-stm32";
+          };
         };
 
         devShells.default = craneLib.devShell {
@@ -84,6 +94,7 @@
 
           packages = [
             pkgs.rust-analyzer
+            pkgs.probe-rs-tools
           ];
         };
       }
