@@ -6,12 +6,22 @@ edition = "2021"
 [dependencies]
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.3"
+
+embassy-executor = { version = "0.6.1", features = [
+    "arch-cortex-m",
+    "executor-thread",
+    "integrated-timers",
+] }
+embassy-futures = "0.1.1"
+embassy-stm32 = { version = "0.1.0", features = [
+    "stm32f407vg",
+    "time-driver-any",
+] }
+embassy-sync = "0.6.0"
+embassy-time = "0.3.2"
+
 panic-halt = "1.0.0"
 rtt-target = "0.5.0"
-
-[dependencies.stm32f4]
-version = "0.15.1"
-features = ["stm32f407", "rt"]
 
 [target.thumbv7em-none-eabihf]
 runner = "probe-rs run --chip STM32F407VGTx"

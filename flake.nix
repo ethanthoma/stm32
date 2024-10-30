@@ -78,15 +78,11 @@
         };
 
         apps = {
-          ${name} = flake-utils.lib.mkApp {
-            drv = my-crate;
-          };
-          default = apps.${name};
-
           probe = flake-utils.lib.mkApp {
             drv = probe;
             name = "run-stm32";
           };
+          default = apps.probe;
         };
 
         devShells.default = craneLib.devShell {

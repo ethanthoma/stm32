@@ -1,17 +1,22 @@
 #![no_main]
 #![no_std]
 
-use cortex_m_rt::entry;
+use embassy_executor::Spawner;
+use embassy_stm32::Config;
+use embassy_time::Timer;
 use panic_halt as _;
 use rtt_target::{rprintln, rtt_init_print};
-use stm32f4::stm32f407;
 
-#[entry]
-fn main() -> ! {
-    let _peripherals = stm32f407::Peripherals::take().unwrap();
-
+#[embassy_executor::main]
+async fn main(_spawner: Spawner) -> ! {
+    let config = Config::default();
+    let _p = embassy_stm32::init(config);
     rtt_init_print!();
+
+    rprintln!("starting...");
+
     loop {
-        rprintln!("Hello, world!");
+        rprintln!("ping");
+        Timer::after_secs(1).await;
     }
 }
