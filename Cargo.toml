@@ -27,10 +27,5 @@ embassy-time = { version = "0.3.2", features = ["defmt"] }
 
 panic-probe = "0.3.2"
 
-[target.thumbv7em-none-eabihf]
-runner = "probe-rs run --chip STM32F407VGTx --connect-under-reset"
-
-build = "build.rs"
-
 [profile.release]
 debug = 2

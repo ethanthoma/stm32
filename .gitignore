@@ -1,18 +1,17 @@
-/*
-/**
+*
+!*/
 
-!README.md
-!LICENSE
-!.gitignore
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/LICENSE
 
-!flake.*
+!/flake.*
+!/Cargo.*
+!/build.rs
+!/memory.x
+!/rust-analyzer.toml
+!/Embed.toml
 
-!Cargo.*
-!src/
-!src/**/*.rs
-!memory.x
-!build.rs
-!.cargo/
-!.cargo/config.toml
-!rust-analyzer.toml
-!Embed.toml
+!/.cargo/config.toml
+!/src/**/*.rs
