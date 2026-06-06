@@ -1,12 +1,15 @@
 #![no_main]
 #![no_std]
 
-use defmt::info;
+use defmt::{info, unwrap};
 use embassy_executor::Spawner;
 use embassy_stm32::bind_interrupts;
 use embassy_stm32::exti;
 use embassy_stm32::gpio;
 use embassy_stm32::interrupt;
+use embassy_stm32::mode::Async;
+use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -14,28 +17,41 @@ bind_interrupts!(struct Irqs {
     EXTI0 => exti::InterruptHandler<interrupt::typelevel::EXTI0>;
 });
 
+static CHANNEL: Channel<ThreadModeRawMutex, (), 4> = Channel::new();
+
+#[embassy_executor::task]
+async fn task_button(mut button: exti::ExtiInput<'static, Async>) {
+    loop {
+        button.wait_for_rising_edge().await;
+        info!("pressed!");
+        CHANNEL.send(()).await;
+        Timer::after_millis(20).await;
+        button.wait_for_falling_edge().await;
+        Timer::after_millis(20).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn task_led(mut led: gpio::Output<'static>) {
+    loop {
+        CHANNEL.receive().await;
+        led.toggle();
+        info!("led = {}", led.get_output_level())
+    }
+}
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(spawner: Spawner) -> ! {
     let p = embassy_stm32::init(Default::default());
     info!("starting...");
 
-    let mut green = gpio::Output::new(p.PD12, gpio::Level::Low, gpio::Speed::Low);
+    let button = exti::ExtiInput::new(p.PA0, p.EXTI0, gpio::Pull::Down, Irqs);
+    let led_green = gpio::Output::new(p.PD12, gpio::Level::Low, gpio::Speed::Low);
 
-    let mut user_button = exti::ExtiInput::new(p.PA0, p.EXTI0, gpio::Pull::Down, Irqs);
-    let mut on = false;
+    spawner.spawn(unwrap!(task_button(button)));
+    spawner.spawn(unwrap!(task_led(led_green)));
 
     loop {
-        user_button.wait_for_rising_edge().await;
-        on = !on;
-        let level = if on {
-            gpio::Level::High
-        } else {
-            gpio::Level::Low
-        };
-        green.set_level(level);
-        info!("led = {}", on);
-        Timer::after_millis(20).await;
-        user_button.wait_for_falling_edge().await;
-        Timer::after_millis(20).await;
+        Timer::after_secs(1).await;
     }
 }
