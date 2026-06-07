@@ -3,12 +3,15 @@
 
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
+use embassy_stm32::adc::Adc;
+use embassy_stm32::adc::SampleTime;
 use embassy_stm32::bind_interrupts;
 use embassy_stm32::exti;
 use embassy_stm32::gpio;
 use embassy_stm32::interrupt;
 use embassy_stm32::mode::Async;
 use embassy_stm32::peripherals;
+use embassy_stm32::peripherals::ADC1;
 use embassy_stm32::time;
 use embassy_stm32::timer::simple_pwm;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
@@ -66,11 +69,36 @@ async fn task_breathe(mut pwm: simple_pwm::SimplePwm<'static, peripherals::TIM4>
     }
 }
 
+#[embassy_executor::task]
+async fn task_temp(mut adc: Adc<'static, ADC1>) {
+    let mut vrefint = adc.enable_vrefint();
+    let convert_to_millivolts = |vsense: u16, vrefint: u16| {
+        const V_REFINT: u32 = 1210; // mv
+        (u32::from(vsense) * V_REFINT / u32::from(vrefint)) as u16
+    };
+
+    let mut temp = adc.enable_temperature();
+    let convert_to_celcius = |vsense: u16, vrefint: u16| {
+        const V_25: i32 = 760; // mv
+        const AVG_SLOPE: f32 = 2.5; // mv/C
+
+        ((convert_to_millivolts(vsense, vrefint) as i32 - V_25) as f32 / AVG_SLOPE) + 25.
+    };
+
+    loop {
+        let vsense = adc.blocking_read(&mut temp, SampleTime::CYCLES480);
+        let vrefint = adc.blocking_read(&mut vrefint, SampleTime::CYCLES480);
+        info!("internal temp: {} C", convert_to_celcius(vsense, vrefint));
+        Timer::after_secs(1).await;
+    }
+}
+
 #[embassy_executor::main]
-async fn main(spawner: Spawner) -> ! {
+async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
     info!("starting...");
 
+    // pd12 = green, pd13 = orange, pd14 = red, pd15 = blue
     let button = exti::ExtiInput::new(p.PA0, p.EXTI0, gpio::Pull::Down, Irqs);
     let led_red = gpio::Output::new(p.PD14, gpio::Level::Low, gpio::Speed::Low);
     let led_green = gpio::Output::new(p.PD12, gpio::Level::Low, gpio::Speed::Low);
@@ -85,13 +113,11 @@ async fn main(spawner: Spawner) -> ! {
         time::khz(10),
         Default::default(),
     );
+    let adc = Adc::new(p.ADC1);
 
     spawner.spawn(unwrap!(task_button(button)));
     spawner.spawn(unwrap!(task_led(led_green)));
     spawner.spawn(unwrap!(task_blink(led_red)));
     spawner.spawn(unwrap!(task_breathe(pwm)));
-
-    loop {
-        Timer::after_secs(1).await;
-    }
+    spawner.spawn(unwrap!(task_temp(adc)));
 }
