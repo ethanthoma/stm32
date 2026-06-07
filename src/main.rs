@@ -9,7 +9,7 @@ use embassy_stm32::gpio;
 use embassy_stm32::interrupt;
 use embassy_stm32::mode::Async;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -17,14 +17,14 @@ bind_interrupts!(struct Irqs {
     EXTI0 => exti::InterruptHandler<interrupt::typelevel::EXTI0>;
 });
 
-static CHANNEL: Channel<ThreadModeRawMutex, (), 4> = Channel::new();
+static SIGNAL: Signal<ThreadModeRawMutex, ()> = Signal::new();
 
 #[embassy_executor::task]
 async fn task_button(mut button: exti::ExtiInput<'static, Async>) {
     loop {
         button.wait_for_rising_edge().await;
         info!("pressed!");
-        CHANNEL.send(()).await;
+        SIGNAL.signal(());
         Timer::after_millis(20).await;
         button.wait_for_falling_edge().await;
         Timer::after_millis(20).await;
@@ -34,7 +34,7 @@ async fn task_button(mut button: exti::ExtiInput<'static, Async>) {
 #[embassy_executor::task]
 async fn task_led(mut led: gpio::Output<'static>) {
     loop {
-        CHANNEL.receive().await;
+        SIGNAL.wait().await;
         led.toggle();
         info!("led = {}", led.get_output_level())
     }
