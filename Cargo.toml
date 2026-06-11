@@ -29,5 +29,8 @@ embassy-time = { version = "0.5.1", features = ["defmt"] }
 
 panic-probe = "0.3.2"
 
+verus_builtin = { git = "https://github.com/verus-lang/verus", rev = "cd0350583e528acb7367d56dc0e5a23f6336fe63" }
+verus_builtin_macros = { git = "https://github.com/verus-lang/verus", rev = "cd0350583e528acb7367d56dc0e5a23f6336fe63" }
+
 [profile.release]
 debug = 2

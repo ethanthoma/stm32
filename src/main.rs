@@ -17,6 +17,8 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Ticker, Timer};
 use {defmt_rtt as _, panic_probe as _};
 
+mod temp_convert;
+
 bind_interrupts!(struct Irqs {
     EXTI0 => exti::InterruptHandler<interrupt::typelevel::EXTI0>;
 });
@@ -40,17 +42,15 @@ async fn task_button(mut button: exti::ExtiInput<'static, Async>) {
 #[embassy_executor::task]
 async fn task_temp(mut adc: Adc<'static, ADC1>) {
     let mut vrefint = adc.enable_vrefint();
-    let convert_to_millivolts = |vsense: u16, vrefint: u16| {
-        const V_REFINT: u32 = 1210; // mv
-        (u32::from(vsense) * V_REFINT / u32::from(vrefint)) as u16
-    };
 
     let mut temp = adc.enable_temperature();
     let convert_to_celcius = |vsense: u16, vrefint: u16| {
         const V_25: i32 = 760; // mv
         const AVG_SLOPE: f32 = 2.5; // mv/C
 
-        ((convert_to_millivolts(vsense, vrefint) as i32 - V_25) as f32 / AVG_SLOPE) + 25.
+        let mv = temp_convert::to_millivolts(vsense, vrefint) as i32;
+
+        ((mv - V_25) as f32 / AVG_SLOPE) + 25.
     };
 
     loop {
