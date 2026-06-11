@@ -2,24 +2,19 @@
 #![no_std]
 
 use defmt::{info, unwrap};
-use embassy_executor::Spawner;
-use embassy_stm32::adc::Adc;
-use embassy_stm32::adc::SampleTime;
+use embassy_executor::{InterruptExecutor, Spawner};
+use embassy_stm32::adc::{Adc, SampleTime};
 use embassy_stm32::bind_interrupts;
 use embassy_stm32::exti;
 use embassy_stm32::gpio;
 use embassy_stm32::interrupt;
+use embassy_stm32::interrupt::InterruptExt;
 use embassy_stm32::mode::Async;
-use embassy_stm32::peripherals;
 use embassy_stm32::peripherals::ADC1;
-use embassy_stm32::time;
-use embassy_stm32::timer::simple_pwm;
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_time::Duration;
-use embassy_time::Ticker;
-use embassy_time::Timer;
+use embassy_time::{Duration, Ticker, Timer};
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -27,6 +22,8 @@ bind_interrupts!(struct Irqs {
 });
 
 static CHANNEL: Channel<ThreadModeRawMutex, (), 4> = Channel::new();
+static SETPOINT: Signal<CriticalSectionRawMutex, f32> = Signal::new();
+static TARGET: Signal<ThreadModeRawMutex, f32> = Signal::new();
 
 #[embassy_executor::task]
 async fn task_button(mut button: exti::ExtiInput<'static, Async>) {
@@ -37,29 +34,6 @@ async fn task_button(mut button: exti::ExtiInput<'static, Async>) {
         Timer::after_millis(20).await;
         button.wait_for_falling_edge().await;
         Timer::after_millis(20).await;
-    }
-}
-
-#[embassy_executor::task]
-async fn task_blink(mut led: gpio::Output<'static>) {
-    loop {
-        led.toggle();
-        info!("blink = {}", led.get_output_level());
-        Timer::after_secs(1).await;
-    }
-}
-
-#[embassy_executor::task]
-async fn task_breathe(mut pwm: simple_pwm::SimplePwm<'static, peripherals::TIM4>) {
-    let mut ch = pwm.ch4();
-    ch.enable();
-    let steps = 100;
-
-    loop {
-        for i in (0..=steps).chain((1..steps).rev()) {
-            ch.set_duty_cycle_fraction(i * i, steps * steps);
-            Timer::after_millis(10).await;
-        }
     }
 }
 
@@ -87,16 +61,13 @@ async fn task_temp(mut adc: Adc<'static, ADC1>) {
     }
 }
 
-static SETPOINT: Signal<ThreadModeRawMutex, f32> = Signal::new();
-static TARGET: Signal<ThreadModeRawMutex, f32> = Signal::new();
-
 enum Joint {
     Home,
     Extended,
 }
 
 #[embassy_executor::task]
-async fn task_control() {
+async fn task_control(mut led: gpio::Output<'static>) {
     const HZ: u64 = 100;
     let mut ticker = Ticker::every(Duration::from_hz(HZ));
     let mut ticks = 1;
@@ -121,9 +92,12 @@ async fn task_control() {
             sp = new_sp;
         }
 
-        if ticks >= 5 {
+        if ticks % 5 == 0 {
             info!("sp = {}; v = {}", sp, v);
-            ticks = 0;
+        }
+
+        if ticks % 50 == 0 {
+            led.toggle();
         }
 
         let e = sp - v;
@@ -193,33 +167,34 @@ async fn task_supervisor(mut led: gpio::Output<'static>) {
     }
 }
 
+static EXECUTOR_H: InterruptExecutor = InterruptExecutor::new();
+
+#[interrupt]
+unsafe fn UART4() {
+    unsafe {
+        EXECUTOR_H.on_interrupt();
+    }
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
     info!("starting...");
 
+    interrupt::UART4.set_priority(interrupt::Priority::P6); // high
+
     // pd12 = green, pd13 = orange, pd14 = red, pd15 = blue
     let button = exti::ExtiInput::new(p.PA0, p.EXTI0, gpio::Pull::Down, Irqs);
-    let led_red = gpio::Output::new(p.PD14, gpio::Level::Low, gpio::Speed::Low);
     let led_green = gpio::Output::new(p.PD12, gpio::Level::Low, gpio::Speed::Low);
-
-    let pin = simple_pwm::PwmPin::new(p.PD15, gpio::OutputType::PushPull);
-    let pwm = simple_pwm::SimplePwm::new(
-        p.TIM4,
-        None,
-        None,
-        None,
-        Some(pin),
-        time::khz(10),
-        Default::default(),
-    );
+    let led_blue = gpio::Output::new(p.PD15, gpio::Level::Low, gpio::Speed::Low);
     let adc = Adc::new(p.ADC1);
 
-    spawner.spawn(unwrap!(task_button(button)));
-    spawner.spawn(unwrap!(task_blink(led_red)));
-    spawner.spawn(unwrap!(task_breathe(pwm)));
-    spawner.spawn(unwrap!(task_temp(adc)));
-    spawner.spawn(unwrap!(task_control()));
-    spawner.spawn(unwrap!(task_motion()));
+    EXECUTOR_H
+        .start(interrupt::UART4)
+        .spawn(unwrap!(task_control(led_blue)));
+
     spawner.spawn(unwrap!(task_supervisor(led_green)));
+    spawner.spawn(unwrap!(task_button(button)));
+    spawner.spawn(unwrap!(task_temp(adc)));
+    spawner.spawn(unwrap!(task_motion()));
 }
