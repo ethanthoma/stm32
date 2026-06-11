@@ -8,10 +8,12 @@
 
 !/flake.*
 !/Cargo.*
-!/build.rs
-!/memory.x
 !/rust-analyzer.toml
 !/Embed.toml
 
 !/.cargo/config.toml
-!/src/**/*.rs
+
+!/crates/**/Cargo.toml
+!/crates/**/build.rs
+!/crates/**/memory.x
+!/crates/**/src/**/*.rs

@@ -28,7 +28,7 @@
       perSystem =
         { pkgs, system, ... }:
         let
-          name = (pkgs.lib.importTOML ./Cargo.toml).package.name;
+          name = (pkgs.lib.importTOML ./crates/firmware/Cargo.toml).package.name;
 
           rustToolchain = (inputs.rust-overlay.lib.mkRustBin { } pkgs).stable.latest.default.override {
             targets = [ "thumbv7em-none-eabihf" ];
@@ -131,16 +131,23 @@
             '';
           };
 
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter =
+              path: type: (craneLib.filterCargoSources path type) || (builtins.baseNameOf path == "memory.x");
+          };
+
+          cargoVendorDir = craneLib.vendorCargoDeps { inherit src; };
+
           my-crate = craneLib.buildPackage {
-            src = pkgs.lib.cleanSourceWith {
-              src = ./.;
-              filter =
-                path: type: (craneLib.filterCargoSources path type) || (builtins.baseNameOf path == "memory.x");
-            };
+            inherit src;
+
+            pname = name;
+            version = "0.1.0";
 
             strictDeps = true;
 
-            cargoExtraArgs = "--target thumbv7em-none-eabihf";
+            cargoExtraArgs = "-p stm32 --target thumbv7em-none-eabihf";
 
             doCheck = false;
 
@@ -156,9 +163,20 @@
         rec {
           checks = {
             inherit my-crate;
-            verify = pkgs.runCommand "verus-verify" { } ''
-              cp ${./src/temp_convert.rs} ./temp_convert.rs
-              ${verus}/bin/verus --crate-type=lib ./temp_convert.rs
+            verify = pkgs.runCommand "verus-verify" {
+              nativeBuildInputs = [
+                rustToolchain
+                verus
+              ];
+            } ''
+              cp -r ${src} build
+              chmod -R +w build
+              cd build
+              export CARGO_HOME=$PWD/.cargo-home
+              mkdir -p $CARGO_HOME
+              cp ${cargoVendorDir}/config.toml $CARGO_HOME/config.toml
+              cargo verus focus -p stm32-core --features verus --offline \
+                --target x86_64-unknown-linux-gnu
               touch $out
             '';
           };
@@ -171,6 +189,7 @@
           apps.default = {
             type = "app";
             program = pkgs.lib.getExe flash;
+            meta.description = "flash and run the firmware on the STM32F407";
           };
 
           devshells.default = {
@@ -187,8 +206,8 @@
             commands = [
               {
                 name = "verify";
-                help = "verify src/temp_convert.rs with verus";
-                command = "exec ${verus}/bin/verus --crate-type=lib src/temp_convert.rs";
+                help = "verify the stm32-core crate with cargo-verus";
+                command = "exec cargo verus focus -p stm32-core --features verus --target x86_64-unknown-linux-gnu";
               }
             ];
           };

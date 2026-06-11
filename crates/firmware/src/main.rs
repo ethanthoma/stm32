@@ -17,8 +17,6 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Ticker, Timer};
 use {defmt_rtt as _, panic_probe as _};
 
-mod temp_convert;
-
 bind_interrupts!(struct Irqs {
     EXTI0 => exti::InterruptHandler<interrupt::typelevel::EXTI0>;
 });
@@ -48,7 +46,7 @@ async fn task_temp(mut adc: Adc<'static, ADC1>) {
         const V_25: i32 = 760; // mv
         const AVG_SLOPE: f32 = 2.5; // mv/C
 
-        let mv = temp_convert::to_millivolts(vsense, vrefint) as i32;
+        let mv = stm32_core::temp_convert::to_millivolts(vsense, vrefint) as i32;
 
         ((mv - V_25) as f32 / AVG_SLOPE) + 25.
     };

@@ -1,10 +1,8 @@
-#![allow(unexpected_cfgs)]
-
-#[cfg(not(verus_keep_ghost))]
+#[cfg(not(feature = "verus"))]
 use verus_builtin_macros::verus;
-#[cfg(verus_keep_ghost)]
+#[cfg(feature = "verus")]
 use vstd::arithmetic::div_mod::{lemma_div_is_ordered, lemma_div_is_ordered_by_denominator};
-#[cfg(verus_keep_ghost)]
+#[cfg(feature = "verus")]
 use vstd::prelude::*;
 
 verus! {

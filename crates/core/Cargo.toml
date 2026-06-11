@@ -1,0 +1,15 @@
+[package]
+name = "stm32-core"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.verus]
+verify = true
+
+[features]
+verus = ["dep:vstd", "dep:verus_builtin"]
+
+[dependencies]
+verus_builtin_macros = { git = "https://github.com/verus-lang/verus", rev = "cd0350583e528acb7367d56dc0e5a23f6336fe63" }
+verus_builtin = { git = "https://github.com/verus-lang/verus", rev = "cd0350583e528acb7367d56dc0e5a23f6336fe63", optional = true }
+vstd = { git = "https://github.com/verus-lang/verus", rev = "cd0350583e528acb7367d56dc0e5a23f6336fe63", optional = true }
