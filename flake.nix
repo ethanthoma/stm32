@@ -131,6 +131,50 @@
             '';
           };
 
+          kaniToolchain = (inputs.rust-overlay.lib.mkRustBin { } pkgs).nightly."2025-11-21".default.override {
+            extensions = [
+              "rustc-dev"
+              "rust-src"
+              "llvm-tools-preview"
+            ];
+          };
+
+          kani = pkgs.stdenv.mkDerivation rec {
+            pname = "kani";
+            version = "0.67.0";
+            src = pkgs.fetchzip {
+              url = "https://github.com/model-checking/kani/releases/download/kani-${version}/kani-${version}-x86_64-unknown-linux-gnu.tar.gz";
+              hash = "sha256-ZYBkm6sWowerivMwIsDDROACGvk3b6OHfSpYP6SdF6g=";
+              stripRoot = false;
+            };
+            nativeBuildInputs = [
+              pkgs.autoPatchelfHook
+              pkgs.makeWrapper
+            ];
+            buildInputs = [
+              pkgs.stdenv.cc.cc.lib
+              pkgs.zlib
+              kaniToolchain
+            ];
+            dontConfigure = true;
+            dontBuild = true;
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out/libexec/kani $out/bin
+              cp -r ./kani-${version}/* $out/libexec/kani/
+              chmod -R u+w $out/libexec/kani
+              ln -s ${kaniToolchain} $out/libexec/kani/toolchain
+              for cmd in kani cargo-kani; do
+                makeWrapper $out/libexec/kani/bin/kani-driver $out/bin/$cmd \
+                  --argv0 $cmd \
+                  --prefix PATH : $out/libexec/kani/bin \
+                  --prefix PATH : ${kaniToolchain}/bin \
+                  --prefix PATH : ${pkgs.gcc}/bin
+              done
+              runHook postInstall
+            '';
+          };
+
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
             filter =
@@ -163,22 +207,45 @@
         rec {
           checks = {
             inherit my-crate;
-            verify = pkgs.runCommand "verus-verify" {
-              nativeBuildInputs = [
-                rustToolchain
-                verus
-              ];
-            } ''
-              cp -r ${src} build
-              chmod -R +w build
-              cd build
-              export CARGO_HOME=$PWD/.cargo-home
-              mkdir -p $CARGO_HOME
-              cp ${cargoVendorDir}/config.toml $CARGO_HOME/config.toml
-              cargo verus focus -p stm32-core --features verus --offline \
-                --target x86_64-unknown-linux-gnu
-              touch $out
-            '';
+            verify =
+              pkgs.runCommand "verus-verify"
+                {
+                  nativeBuildInputs = [
+                    rustToolchain
+                    verus
+                  ];
+                }
+                ''
+                  cp -r ${src} build
+                  chmod -R +w build
+                  cd build
+                  export CARGO_HOME=$PWD/.cargo-home
+                  mkdir -p $CARGO_HOME
+                  cp ${cargoVendorDir}/config.toml $CARGO_HOME/config.toml
+                  cargo verus focus -p stm32-core --features verus --offline \
+                    --target x86_64-unknown-linux-gnu
+                  touch $out
+                '';
+
+            kani =
+              pkgs.runCommand "kani-verify"
+                {
+                  nativeBuildInputs = [ kani ];
+                }
+                ''
+                  cp -r ${src} build
+                  chmod -R +w build
+                  cd build
+                  export CARGO_HOME=$PWD/.cargo-home
+                  mkdir -p $CARGO_HOME
+                  cp ${cargoVendorDir}/config.toml $CARGO_HOME/config.toml
+                  export HOME=$PWD/home
+                  mkdir -p $HOME
+                  export CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu
+                  export CARGO_NET_OFFLINE=true
+                  cargo-kani kani -p stm32-core
+                  touch $out
+                '';
           };
 
           packages = {
@@ -201,6 +268,7 @@
               verus
               verusfmt
               verus-analyzer
+              kani
             ];
 
             commands = [
@@ -208,6 +276,11 @@
                 name = "verify";
                 help = "verify the stm32-core crate with cargo-verus";
                 command = "exec cargo verus focus -p stm32-core --features verus --target x86_64-unknown-linux-gnu";
+              }
+              {
+                name = "kani-check";
+                help = "cross-check stm32-core with kani (bounded model checking)";
+                command = "CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu exec cargo kani -p stm32-core";
               }
             ];
           };
