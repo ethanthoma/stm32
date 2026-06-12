@@ -39,22 +39,18 @@ async fn task_button(mut button: exti::ExtiInput<'static, Async>) {
 
 #[embassy_executor::task]
 async fn task_temp(mut adc: Adc<'static, ADC1>) {
+    use stm32_core::temp_convert::{to_millicelsius, to_millivolts};
+
     let mut vrefint = adc.enable_vrefint();
-
     let mut temp = adc.enable_temperature();
-    let convert_to_celcius = |vsense: u16, vrefint: u16| {
-        const V_25: i32 = 760; // mv
-        const AVG_SLOPE: f32 = 2.5; // mv/C
-
-        let mv = stm32_core::temp_convert::to_millivolts(vsense, vrefint) as i32;
-
-        ((mv - V_25) as f32 / AVG_SLOPE) + 25.
-    };
 
     loop {
         let vsense = adc.blocking_read(&mut temp, SampleTime::CYCLES480);
         let vrefint = adc.blocking_read(&mut vrefint, SampleTime::CYCLES480);
-        info!("internal temp: {} C", convert_to_celcius(vsense, vrefint));
+
+        let mc = to_millicelsius(to_millivolts(vsense, vrefint));
+        info!("internal temp: {} C", mc as f32 / 1000.0);
+
         Timer::after_secs(1).await;
     }
 }

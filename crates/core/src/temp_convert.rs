@@ -38,4 +38,20 @@ pub fn to_millivolts(vsense: u16, vrefint: u16) -> (mv: u16)
     v as u16
 }
 
+// sensor output at 25 C, mV
+pub const V_25_MV: i32 = 760;
+
+// 1000 / 2.5 mV-per-C, mC * mV^-1
+pub const MC_PER_MV: i32 = 400;
+
+// 25 C, mC
+pub const OFFSET_MC: i32 = 25_000;
+
+pub fn to_millicelsius(mv: u16) -> (mc: i32)
+    ensures
+        mc == (mv as int - V_25_MV as int) * MC_PER_MV as int + OFFSET_MC as int,
+{
+    (mv as i32 - V_25_MV) * MC_PER_MV + OFFSET_MC
+}
+
 } // verus!
