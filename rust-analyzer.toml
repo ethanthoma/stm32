@@ -1,5 +1,9 @@
 [cargo]
 target = "thumbv7em-none-eabihf"
+allTargets = false
 
 [check]
 allTargets = false
+
+[diagnostics]
+disabled = ["inactive-code"]

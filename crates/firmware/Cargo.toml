@@ -3,6 +3,12 @@ name = "stm32"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "stm32"
+path = "src/main.rs"
+test = false
+bench = false
+
 [dependencies]
 stm32-core = { path = "../core" }
 
