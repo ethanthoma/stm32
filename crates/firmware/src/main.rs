@@ -1,7 +1,7 @@
 #![no_main]
 #![no_std]
 
-use defmt::{info, unwrap};
+use defmt::{info, unwrap, warn};
 use embassy_executor::{InterruptExecutor, Spawner};
 use embassy_stm32::adc::{Adc, SampleTime};
 use embassy_stm32::bind_interrupts;
@@ -48,8 +48,10 @@ async fn task_temp(mut adc: Adc<'static, ADC1>) {
         let vsense = adc.blocking_read(&mut temp, SampleTime::CYCLES480);
         let vrefint = adc.blocking_read(&mut vrefint, SampleTime::CYCLES480);
 
-        let mc = to_millicelsius(to_millivolts(vsense, vrefint));
-        info!("internal temp: {} C", mc as f32 / 1000.0);
+        match to_millivolts(vsense, vrefint) {
+            Some(mv) => info!("internal temp: {} C", to_millicelsius(mv) as f32 / 1000.0),
+            None => warn!("temp: adc out of range (vsense={}, vrefint={})", vsense, vrefint),
+        }
 
         Timer::after_secs(1).await;
     }
