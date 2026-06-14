@@ -308,6 +308,8 @@
 
             cargoArtifacts = null;
 
+            nativeBuildInputs = [ pkgs.flip-link ];
+
             buildInputs = [ ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
           };
 
@@ -393,6 +395,7 @@
               pkgs.stdenv.cc
               pkgs.rust-analyzer
               pkgs.probe-rs-tools
+              pkgs.flip-link
               verus
               verusfmt
               verus-analyzer
@@ -403,15 +406,25 @@
             commands = [
               {
                 name = "check";
-                help = "run a verifier: check {verus | kani | flux [file] | all}";
+                help = "run a check: check {verus | kani | flux [file] | stack | all}";
                 command = ''
                   verus() { PATH="${verusToolchain}/bin:$PATH" cargo verus focus -p stm32-core --features verus --target x86_64-unknown-linux-gnu; }
                   kani() { CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu cargo kani -p stm32-core; }
                   flux() { command flux --crate-type=lib "''${1:-$PRJ_ROOT/notes/flux-example.rs}"; }
+                  stack() {
+                    cargo build -p stm32 --release --target thumbv7em-none-eabihf || return 1
+                    size "$PRJ_ROOT/target/thumbv7em-none-eabihf/release/stm32" | awk 'NR==2 {
+                      ram = $2 + $3; total = 128 * 1024; free = total - ram;
+                      printf "flash:          %6d bytes\n", $1;
+                      printf "static ram:     %6d bytes (data %d + bss %d)\n", ram, $2, $3;
+                      printf "stack headroom: %6d bytes of %d (%.1f%%) — flip-link faults on overflow\n", free, total, 100 * free / total;
+                    }'
+                  }
                   case "''${1:-}" in
                     verus) verus ;;
                     kani) kani ;;
                     flux) flux "''${2:-}" ;;
+                    stack) stack ;;
                     all)
                       rc=0
                       verus || rc=1
@@ -419,7 +432,7 @@
                       flux || rc=1
                       exit $rc
                       ;;
-                    *) echo "usage: check {verus | kani | flux [file] | all}" >&2; exit 2 ;;
+                    *) echo "usage: check {verus | kani | flux [file] | stack | all}" >&2; exit 2 ;;
                   esac
                 '';
               }
