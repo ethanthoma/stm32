@@ -322,7 +322,7 @@
               pkgs.runCommand "verus-verify"
                 {
                   nativeBuildInputs = [
-                    rustToolchain
+                    verusToolchain
                     verus
                   ];
                 }
@@ -405,7 +405,7 @@
                 name = "check";
                 help = "run a verifier: check {verus | kani | flux [file] | all}";
                 command = ''
-                  verus() { cargo verus focus -p stm32-core --features verus --target x86_64-unknown-linux-gnu; }
+                  verus() { PATH="${verusToolchain}/bin:$PATH" cargo verus focus -p stm32-core --features verus --target x86_64-unknown-linux-gnu; }
                   kani() { CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu cargo kani -p stm32-core; }
                   flux() { command flux --crate-type=lib "''${1:-$PRJ_ROOT/notes/flux-example.rs}"; }
                   case "''${1:-}" in

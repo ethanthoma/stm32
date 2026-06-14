@@ -83,8 +83,9 @@ async fn task_control(mut led: gpio::Output<'static>) {
     let dt_over_tau = q16::from_f32(dt_s / 2.0); // DT / TAU (TAU = 2 s)
     let lo = q16::from_int(-1);
     let hi = q16::from_int(1);
+    let i_lo = q16::from_int(-10);
+    let i_hi = q16::from_int(10);
 
-    let mut u;
     let mut integral = q16::from_int(0);
     let mut sp = q16::from_int(0);
     let mut v_prev = q16::from_int(0);
@@ -106,17 +107,14 @@ async fn task_control(mut led: gpio::Output<'static>) {
         }
 
         let e = sp - v;
+        integral = (integral + e * dt).clamp(i_lo, i_hi);
+
         let p = k_p * e;
         let i = k_i * integral;
         let d = k_d_eff * (v_prev - v);
-        let u_raw = p + i + d;
-        u = u_raw.clamp(lo, hi);
+        let u = (p + i + d).clamp(lo, hi);
 
-        if u == u_raw {
-            integral = integral + e * dt;
-        }
         v_prev = v;
-
         v = v + (k * u - v) * dt_over_tau;
 
         ticks = ticks.wrapping_add(1);
