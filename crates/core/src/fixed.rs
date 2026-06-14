@@ -44,6 +44,65 @@ impl q16 {
         }
     }
 
+    pub fn to_bits(self) -> (b: i32)
+        ensures
+            b == self.val(),
+    {
+        self.0
+    }
+
+    pub open spec fn add_bits(self, other: q16) -> int {
+        let s = self.val() + other.val();
+        if s > i32::MAX {
+            i32::MAX as int
+        } else if s < i32::MIN {
+            i32::MIN as int
+        } else {
+            s
+        }
+    }
+
+    pub fn saturating_add(self, other: q16) -> (q: q16)
+        ensures
+            q.val() == self.add_bits(other),
+    {
+        let sum: i64 = self.0 as i64 + other.0 as i64;
+
+        if sum > i32::MAX as i64 {
+            q16(i32::MAX)
+        } else if sum < i32::MIN as i64 {
+            q16(i32::MIN)
+        } else {
+            q16(sum as i32)
+        }
+    }
+
+    pub open spec fn sub_bits(self, other: q16) -> int {
+        let s = self.val() - other.val();
+        if s > i32::MAX {
+            i32::MAX as int
+        } else if s < i32::MIN {
+            i32::MIN as int
+        } else {
+            s
+        }
+    }
+
+    pub fn saturating_sub(self, other: q16) -> (q: q16)
+        ensures
+            q.val() == self.sub_bits(other),
+    {
+        let sum: i64 = self.0 as i64 - other.0 as i64;
+
+        if sum > i32::MAX as i64 {
+            q16(i32::MAX)
+        } else if sum < i32::MIN as i64 {
+            q16(i32::MIN)
+        } else {
+            q16(sum as i32)
+        }
+    }
+
     pub open spec fn mul_bits(self, other: q16) -> int {
         let p = trunc_div(self.val() * other.val(), ONE as int);
         if p > i32::MAX {
@@ -70,6 +129,77 @@ impl q16 {
         } else {
             q16(scaled as i32)
         }
+    }
+
+    pub open spec fn clamp_bits(self, lo: q16, hi: q16) -> int {
+        if self.val() < lo.val() {
+            lo.val()
+        } else if self.val() > hi.val() {
+            hi.val()
+        } else {
+            self.val()
+        }
+    }
+
+    pub fn clamp(self, lo: q16, hi: q16) -> (q: q16)
+        requires
+            lo.val() <= hi.val(),
+        ensures
+            q.val() == self.clamp_bits(lo, hi),
+    {
+        if self.0 > hi.0 {
+            q16(hi.0)
+        } else if self.0 < lo.0 {
+            q16(lo.0)
+        } else {
+            q16(self.0)
+        }
+    }
+}
+
+#[cfg(feature = "verus")]
+impl vstd::std_specs::ops::AddSpecImpl for q16 {
+    open spec fn obeys_add_spec() -> bool {
+        true
+    }
+
+    open spec fn add_req(self, rhs: q16) -> bool {
+        true
+    }
+
+    closed spec fn add_spec(self, rhs: q16) -> q16 {
+        q16(self.add_bits(rhs) as i32)
+    }
+}
+
+impl core::ops::Add for q16 {
+    type Output = q16;
+
+    fn add(self, rhs: q16) -> q16 {
+        self.saturating_add(rhs)
+    }
+}
+
+#[cfg(feature = "verus")]
+impl vstd::std_specs::ops::SubSpecImpl for q16 {
+    open spec fn obeys_sub_spec() -> bool {
+        true
+    }
+
+    open spec fn sub_req(self, rhs: q16) -> bool {
+        true
+    }
+
+    closed spec fn sub_spec(self, rhs: q16) -> q16 {
+        q16(self.sub_bits(rhs) as i32)
+    }
+}
+
+impl core::ops::Sub for q16 {
+    type Output = q16;
+
+    fn sub(self, rhs: q16) -> q16 {
+        self.saturating_sub(rhs)
     }
 }
 

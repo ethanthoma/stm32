@@ -21,8 +21,8 @@ pub const V_REFINT_MIN: u16 = 76;
 
 pub fn to_millivolts(vsense: u16, vrefint: u16) -> (mv: Option<u16>)
     ensures
-        vsense <= ADC_MAX && vrefint >= V_REFINT_MIN ==> (mv matches Some(v)
-            && v == (vsense as int * V_REFINT_MV as int) / (vrefint as int)),
+        vsense <= ADC_MAX && vrefint >= V_REFINT_MIN ==> (mv matches Some(v) && v == (vsense as int
+            * V_REFINT_MV as int) / (vrefint as int)),
         !(vsense <= ADC_MAX && vrefint >= V_REFINT_MIN) ==> mv is None,
 {
     if vsense <= ADC_MAX && vrefint >= V_REFINT_MIN {
@@ -66,7 +66,6 @@ pub fn to_millicelsius(mv: u16) -> (mc: i32)
 }
 
 } // verus!
-
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
