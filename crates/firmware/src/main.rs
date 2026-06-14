@@ -1,5 +1,6 @@
 #![no_main]
 #![no_std]
+#![deny(unsafe_code)]
 #![cfg_attr(flux, flux::opts(check_overflow = "strict"))]
 
 use defmt::{info, unwrap, warn};
@@ -176,6 +177,7 @@ async fn task_supervisor(mut led: gpio::Output<'static>) {
 static EXECUTOR_H: InterruptExecutor = InterruptExecutor::new();
 
 #[interrupt]
+#[allow(unsafe_code)]
 unsafe fn UART4() {
     unsafe {
         EXECUTOR_H.on_interrupt();

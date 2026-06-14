@@ -16,6 +16,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     crane.url = "github:ipetkov/crane";
+    advisory-db = {
+      url = "github:rustsec/advisory-db";
+      flake = false;
+    };
   };
 
   outputs =
@@ -289,7 +293,10 @@
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
             filter =
-              path: type: (craneLib.filterCargoSources path type) || (builtins.baseNameOf path == "memory.x");
+              path: type:
+              (craneLib.filterCargoSources path type)
+              || (builtins.baseNameOf path == "memory.x")
+              || (builtins.baseNameOf path == "deny.toml");
           };
 
           cargoVendorDir = craneLib.vendorCargoDeps { inherit src; };
@@ -360,6 +367,52 @@
                   touch $out
                 '';
 
+            clippy =
+              pkgs.runCommand "clippy"
+                {
+                  nativeBuildInputs = [
+                    rustToolchain
+                    pkgs.flip-link
+                  ];
+                }
+                ''
+                  cp -r ${src} build
+                  chmod -R +w build
+                  cd build
+                  export CARGO_HOME=$PWD/.cargo-home
+                  mkdir -p $CARGO_HOME
+                  cp ${cargoVendorDir}/config.toml $CARGO_HOME/config.toml
+                  cargo clippy --offline --target thumbv7em-none-eabihf -- -D warnings
+                  touch $out
+                '';
+
+            deny =
+              pkgs.runCommand "cargo-deny"
+                {
+                  nativeBuildInputs = [
+                    pkgs.cargo-deny
+                    rustToolchain
+                  ];
+                }
+                ''
+                  cp -r ${src} build
+                  chmod -R +w build
+                  cd build
+                  export CARGO_HOME=$PWD/.cargo-home
+                  mkdir -p $CARGO_HOME
+                  cp ${cargoVendorDir}/config.toml $CARGO_HOME/config.toml
+                  cargo-deny --offline check bans licenses sources
+                  touch $out
+                '';
+
+            audit = pkgs.runCommand "cargo-audit" { nativeBuildInputs = [ pkgs.cargo-audit ]; } ''
+              cp -r ${src} build
+              chmod -R +w build
+              cd build
+              cargo-audit audit -n -d ${inputs.advisory-db}
+              touch $out
+            '';
+
             # smoke test
             flux =
               let
@@ -401,16 +454,21 @@
               verus-analyzer
               kani
               flux
+              pkgs.cargo-deny
+              pkgs.cargo-audit
             ];
 
             commands = [
               {
                 name = "check";
-                help = "run a check: check {verus | kani | flux [file] | stack | all}";
+                help = "run a check: check {verus | kani | flux [file] | clippy | deny | audit | stack | all}";
                 command = ''
                   verus() { PATH="${verusToolchain}/bin:$PATH" cargo verus focus -p stm32-core --features verus --target x86_64-unknown-linux-gnu; }
                   kani() { CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu cargo kani -p stm32-core; }
                   flux() { command flux --crate-type=lib "''${1:-$PRJ_ROOT/notes/flux-example.rs}"; }
+                  clippy() { cargo clippy --target thumbv7em-none-eabihf -- -D warnings; }
+                  deny() { cargo-deny check bans licenses sources; }
+                  audit() { cargo-audit audit; }
                   stack() {
                     cargo build -p stm32 --release --target thumbv7em-none-eabihf || return 1
                     size "$PRJ_ROOT/target/thumbv7em-none-eabihf/release/stm32" | awk 'NR==2 {
@@ -424,15 +482,21 @@
                     verus) verus ;;
                     kani) kani ;;
                     flux) flux "''${2:-}" ;;
+                    clippy) clippy ;;
+                    deny) deny ;;
+                    audit) audit ;;
                     stack) stack ;;
                     all)
                       rc=0
                       verus || rc=1
                       kani || rc=1
                       flux || rc=1
+                      clippy || rc=1
+                      deny || rc=1
+                      audit || rc=1
                       exit $rc
                       ;;
-                    *) echo "usage: check {verus | kani | flux [file] | stack | all}" >&2; exit 2 ;;
+                    *) echo "usage: check {verus | kani | flux [file] | clippy | deny | audit | stack | all}" >&2; exit 2 ;;
                   esac
                 '';
               }

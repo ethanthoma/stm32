@@ -10,6 +10,7 @@
 !/Cargo.*
 !/rust-analyzer.toml
 !/Embed.toml
+!/deny.toml
 
 !/.cargo/config.toml
 
