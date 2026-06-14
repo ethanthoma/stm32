@@ -12,6 +12,7 @@ use embassy_stm32::interrupt;
 use embassy_stm32::interrupt::InterruptExt;
 use embassy_stm32::mode::Async;
 use embassy_stm32::peripherals::ADC1;
+use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
@@ -69,7 +70,10 @@ enum Joint {
 }
 
 #[embassy_executor::task]
-async fn task_control(mut led: gpio::Output<'static>) {
+async fn task_control(
+    mut led: gpio::Output<'static>,
+    mut wdg: IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>,
+) {
     const HZ: u64 = 100;
     let mut ticker = Ticker::every(Duration::from_hz(HZ));
     let mut ticks: u32 = 1;
@@ -93,6 +97,7 @@ async fn task_control(mut led: gpio::Output<'static>) {
 
     loop {
         ticker.next().await;
+        wdg.pet();
 
         if let Some(new_sp) = SETPOINT.try_take() {
             sp = new_sp;
@@ -190,9 +195,12 @@ async fn main(spawner: Spawner) {
     let led_blue = gpio::Output::new(p.PD15, gpio::Level::Low, gpio::Speed::Low);
     let adc = Adc::new(p.ADC1);
 
+    let mut wdg = IndependentWatchdog::new(p.IWDG, 50_000);
+    wdg.unleash();
+
     EXECUTOR_H
         .start(interrupt::UART4)
-        .spawn(unwrap!(task_control(led_blue)));
+        .spawn(unwrap!(task_control(led_blue, wdg)));
 
     spawner.spawn(unwrap!(task_supervisor(led_green)));
     spawner.spawn(unwrap!(task_button(button)));
