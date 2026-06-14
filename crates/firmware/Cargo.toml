@@ -3,6 +3,12 @@ name = "stm32"
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.flux]
+enabled = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(flux)'] }
+
 [[bin]]
 name = "stm32"
 path = "src/main.rs"
@@ -10,7 +16,7 @@ test = false
 bench = false
 
 [dependencies]
-stm32-core = { path = "../core" }
+stm32-core = { path = "../core", features = ["defmt"] }
 
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.3"

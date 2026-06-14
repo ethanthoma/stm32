@@ -51,6 +51,16 @@ impl q16 {
         self.0
     }
 
+    #[verifier::external]
+    pub fn from_f32(val: f32) -> q16 {
+        q16((val * ONE as f32) as i32)
+    }
+
+    #[verifier::external]
+    pub fn to_f32(self) -> f32 {
+        self.0 as f32 / ONE as f32
+    }
+
     pub open spec fn add_bits(self, other: q16) -> int {
         let s = self.val() + other.val();
         if s > i32::MAX {
@@ -227,3 +237,10 @@ impl core::ops::Mul for q16 {
 }
 
 } // verus!
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for q16 {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "{}", self.to_f32())
+    }
+}

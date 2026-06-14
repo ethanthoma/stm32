@@ -13,8 +13,10 @@ verify = true
 
 [features]
 verus = ["dep:vstd", "dep:verus_builtin"]
+defmt = ["dep:defmt"]
 
 [dependencies]
+defmt = { version = "0.3.8", optional = true }
 verus_builtin_macros = { git = "https://github.com/verus-lang/verus", rev = "cd0350583e528acb7367d56dc0e5a23f6336fe63" }
 verus_builtin = { git = "https://github.com/verus-lang/verus", rev = "cd0350583e528acb7367d56dc0e5a23f6336fe63", optional = true }
 vstd = { git = "https://github.com/verus-lang/verus", rev = "cd0350583e528acb7367d56dc0e5a23f6336fe63", optional = true }

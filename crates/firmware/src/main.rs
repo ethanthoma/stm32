@@ -1,5 +1,6 @@
 #![no_main]
 #![no_std]
+#![cfg_attr(flux, flux::opts(check_overflow = "strict"))]
 
 use defmt::{info, unwrap, warn};
 use embassy_executor::{InterruptExecutor, Spawner};
@@ -17,13 +18,15 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Ticker, Timer};
 use {defmt_rtt as _, panic_probe as _};
 
+use stm32_core::fixed::*;
+
 bind_interrupts!(struct Irqs {
     EXTI0 => exti::InterruptHandler<interrupt::typelevel::EXTI0>;
 });
 
 static CHANNEL: Channel<ThreadModeRawMutex, (), 4> = Channel::new();
-static SETPOINT: Signal<CriticalSectionRawMutex, f32> = Signal::new();
-static TARGET: Signal<ThreadModeRawMutex, f32> = Signal::new();
+static SETPOINT: Signal<CriticalSectionRawMutex, q16> = Signal::new();
+static TARGET: Signal<ThreadModeRawMutex, i32> = Signal::new();
 
 #[embassy_executor::task]
 async fn task_button(mut button: exti::ExtiInput<'static, Async>) {
@@ -50,7 +53,10 @@ async fn task_temp(mut adc: Adc<'static, ADC1>) {
 
         match to_millivolts(vsense, vrefint) {
             Some(mv) => info!("internal temp: {} C", to_millicelsius(mv) as f32 / 1000.0),
-            None => warn!("temp: adc out of range (vsense={}, vrefint={})", vsense, vrefint),
+            None => warn!(
+                "temp: adc out of range (vsense={}, vrefint={})",
+                vsense, vrefint
+            ),
         }
 
         Timer::after_secs(1).await;
@@ -68,19 +74,22 @@ async fn task_control(mut led: gpio::Output<'static>) {
     let mut ticker = Ticker::every(Duration::from_hz(HZ));
     let mut ticks = 1;
 
-    const K: u32 = 100;
-    const K_P: f32 = 0.1;
-    const K_I: f32 = 0.1;
-    const K_D: f32 = 0.01;
+    let dt_s = 1.0 / HZ as f32; // seconds per tick
+    let k = q16::from_int(100); // plant gain
+    let k_p = q16::from_f32(0.1);
+    let k_i = q16::from_f32(0.1);
+    let k_d_eff = q16::from_f32(0.01 / dt_s); // K_D / DT
+    let dt = q16::from_f32(dt_s);
+    let dt_over_tau = q16::from_f32(dt_s / 2.0); // DT / TAU (TAU = 2 s)
+    let lo = q16::from_int(-1);
+    let hi = q16::from_int(1);
 
-    let dt: f32 = 1. / HZ as f32;
-    let tau: f32 = 2.0;
-
-    let mut v = 0.0;
     let mut u;
-    let mut integral = 0.0;
-    let mut sp = 0.0;
-    let mut v_prev = 0.;
+    let mut integral = q16::from_int(0);
+    let mut sp = q16::from_int(0);
+    let mut v_prev = q16::from_int(0);
+    let mut v = q16::from_int(0);
+
     loop {
         ticker.next().await;
 
@@ -97,18 +106,18 @@ async fn task_control(mut led: gpio::Output<'static>) {
         }
 
         let e = sp - v;
-        let p = K_P * e;
-        let i = K_I * integral;
-        let d = -K_D * (v - v_prev) / dt;
+        let p = k_p * e;
+        let i = k_i * integral;
+        let d = k_d_eff * (v_prev - v);
         let u_raw = p + i + d;
-        u = u_raw.clamp(-1.0, 1.0);
+        u = u_raw.clamp(lo, hi);
 
-        if u == u_raw {
-            integral += e * dt;
+        if u.to_bits() == u_raw.to_bits() {
+            integral = integral + e * dt;
         }
         v_prev = v;
 
-        v += (K as f32 * u - v) * (dt / tau);
+        v = v + (k * u - v) * dt_over_tau;
 
         ticks += 1;
     }
@@ -119,12 +128,12 @@ async fn task_motion() {
     const HZ: u64 = 100; // hz
     let mut ticker = Ticker::every(Duration::from_hz(HZ));
 
-    const A_MAX: f32 = 20.0;
+    const A_MAX: i32 = 20;
+    const DT: i32 = ((1. / HZ as f32) * 65536.) as i32;
+    const STEP: i32 = A_MAX * DT;
 
-    let dt: f32 = 1. / HZ as f32;
-
-    let mut target = 0.;
-    let mut sp = 0.;
+    let mut target: i32 = 0;
+    let mut sp: i32 = 0;
     loop {
         ticker.next().await;
 
@@ -132,13 +141,12 @@ async fn task_motion() {
             target = new_target;
         }
 
-        let step = A_MAX * dt;
         if sp < target {
-            sp = (sp + step).min(target);
+            sp = (sp + STEP).min(target);
         } else if sp > target {
-            sp = (sp - step).max(target);
+            sp = (sp - STEP).max(target);
         }
-        SETPOINT.signal(sp);
+        SETPOINT.signal(q16::from_bits(sp));
     }
 }
 
@@ -152,12 +160,12 @@ async fn task_supervisor(mut led: gpio::Output<'static>) {
             Joint::Home => {
                 state = Joint::Extended;
                 led.set_high();
-                TARGET.signal(50.);
+                TARGET.signal(50 * 65536);
             }
             Joint::Extended => {
                 led.set_low();
                 state = Joint::Home;
-                TARGET.signal(0.);
+                TARGET.signal(0);
             }
         }
     }
