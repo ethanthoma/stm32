@@ -9,7 +9,7 @@ verus! {
 
 pub const ONE: i32 = 65536;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(non_camel_case_types)]
 pub struct q16(i32);
 
