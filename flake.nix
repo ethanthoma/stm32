@@ -175,6 +175,117 @@
             '';
           };
 
+          fluxToolchain = (inputs.rust-overlay.lib.mkRustBin { } pkgs).nightly."2025-11-25".default.override {
+            extensions = [
+              "rustc-dev"
+              "rust-src"
+              "llvm-tools"
+              "rustfmt"
+              "clippy"
+            ];
+            # compile the firmware crate for host and target
+            targets = [ "thumbv7em-none-eabihf" ];
+          };
+
+          fluxRustlib = "${fluxToolchain}/lib:${fluxToolchain}/lib/rustlib/x86_64-unknown-linux-gnu/lib";
+
+          flux-fixpoint = pkgs.stdenv.mkDerivation {
+            pname = "liquid-fixpoint";
+            version = "nightly";
+            src = pkgs.fetchurl {
+              url = "https://github.com/ucsd-progsys/liquid-fixpoint/releases/download/nightly/fixpoint-x86_64-linux-gnu.tar.gz";
+              hash = "sha256-orqsotO491rdNmspFx3CYajVWt7L5EPHxPVWD4DhlR0=";
+            };
+            sourceRoot = ".";
+            nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+            buildInputs = [
+              pkgs.gmp
+              pkgs.stdenv.cc.cc.lib
+            ];
+            installPhase = ''
+              runHook preInstall
+              install -Dm755 fixpoint $out/bin/fixpoint
+              runHook postInstall
+            '';
+          };
+
+          fluxSrc = pkgs.fetchFromGitHub {
+            owner = "flux-rs";
+            repo = "flux";
+            rev = "74f6e774f436c7152d9a6c487e347869bd39df8a";
+            sha256 = "1q5k4aw8gb0rlnw7jc6wlmpfyxc1ny35z223zsq9x532mxab05ik";
+          };
+
+          fluxShims = pkgs.symlinkJoin {
+            name = "flux-shims";
+            paths = [
+              (pkgs.writeShellScriptBin "cargo" ''
+                case "$1" in +*) shift ;; esac
+                exec ${fluxToolchain}/bin/cargo "$@"
+              '')
+              (pkgs.writeShellScriptBin "rustc" ''
+                case "$1" in +*) shift ;; esac
+                exec ${fluxToolchain}/bin/rustc "$@"
+              '')
+              (pkgs.writeShellScriptBin "rustup" ''
+                [ "$1" = "which" ] || exit 0
+                shift
+                bin=""
+                while [ $# -gt 0 ]; do
+                  case "$1" in
+                    --toolchain) shift 2 ;;
+                    *) bin="$1"; shift ;;
+                  esac
+                done
+                echo "${fluxToolchain}/bin/$bin"
+              '')
+            ];
+          };
+
+          fluxVendor = craneLib.vendorCargoDeps { src = fluxSrc; };
+
+          flux = pkgs.stdenv.mkDerivation {
+            pname = "flux";
+            version = "0-unstable-2026-06-13";
+            src = fluxSrc;
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            configurePhase = ''
+              runHook preConfigure
+              export CARGO_HOME=$TMPDIR/cargo-home
+              mkdir -p $CARGO_HOME
+              cp ${fluxVendor}/config.toml $CARGO_HOME/config.toml
+              export HOME=$TMPDIR/home
+              mkdir -p $HOME
+              export PATH="${fluxShims}/bin:${fluxToolchain}/bin:${flux-fixpoint}/bin:${pkgs.z3}/bin:$PATH"
+              export LD_LIBRARY_PATH="${fluxRustlib}"
+              export CARGO_NET_OFFLINE=true
+              runHook postConfigure
+            '';
+            buildPhase = ''
+              runHook preBuild
+              cargo x install
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out/libexec/flux $out/bin
+              cp -r $CARGO_HOME/bin $out/libexec/flux/bin
+              cp -r $HOME/.flux $out/libexec/flux/sysroot
+              # shims must be LAST here so they end up FIRST on PATH (makeWrapper --prefix prepends in order)
+              for cmd in flux cargo-flux; do
+                makeWrapper $out/libexec/flux/bin/$cmd $out/bin/$cmd \
+                  --prefix PATH : ${fluxToolchain}/bin \
+                  --prefix PATH : ${flux-fixpoint}/bin \
+                  --prefix PATH : ${pkgs.z3}/bin \
+                  --prefix PATH : ${fluxShims}/bin \
+                  --prefix LD_LIBRARY_PATH : ${fluxRustlib} \
+                  --set FLUX_SYSROOT $out/libexec/flux/sysroot
+              done
+              runHook postInstall
+            '';
+            dontStrip = true;
+          };
+
           src = pkgs.lib.cleanSourceWith {
             src = ./.;
             filter =
@@ -246,11 +357,28 @@
                   cargo-kani kani -p stm32-core
                   touch $out
                 '';
+
+            # smoke test
+            flux =
+              let
+                probe = pkgs.writeText "flux-probe.rs" ''
+                  #[flux::sig(fn(x: i32) -> i32{v: v == x})]
+                  pub fn id(x: i32) -> i32 {
+                      x
+                  }
+                '';
+              in
+              pkgs.runCommand "flux-check" { } ''
+                export HOME=$TMPDIR
+                ${flux}/bin/flux --crate-type=lib ${probe}
+                touch $out
+              '';
           };
 
           packages = {
             ${name} = my-crate;
             default = packages.${name};
+            inherit flux;
           };
 
           apps.default = {
@@ -269,18 +397,31 @@
               verusfmt
               verus-analyzer
               kani
+              flux
             ];
 
             commands = [
               {
-                name = "verify";
-                help = "verify the stm32-core crate with cargo-verus";
-                command = "exec cargo verus focus -p stm32-core --features verus --target x86_64-unknown-linux-gnu";
-              }
-              {
-                name = "kani-check";
-                help = "cross-check stm32-core with kani (bounded model checking)";
-                command = "CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu exec cargo kani -p stm32-core";
+                name = "check";
+                help = "run a verifier: check {verus | kani | flux [file] | all}";
+                command = ''
+                  verus() { cargo verus focus -p stm32-core --features verus --target x86_64-unknown-linux-gnu; }
+                  kani() { CARGO_BUILD_TARGET=x86_64-unknown-linux-gnu cargo kani -p stm32-core; }
+                  flux() { command flux --crate-type=lib "''${1:-$PRJ_ROOT/notes/flux-example.rs}"; }
+                  case "''${1:-}" in
+                    verus) verus ;;
+                    kani) kani ;;
+                    flux) flux "''${2:-}" ;;
+                    all)
+                      rc=0
+                      verus || rc=1
+                      kani || rc=1
+                      flux || rc=1
+                      exit $rc
+                      ;;
+                    *) echo "usage: check {verus | kani | flux [file] | all}" >&2; exit 2 ;;
+                  esac
+                '';
               }
             ];
           };
