@@ -42,4 +42,6 @@ embassy-stm32 = { version = "0.6.0", features = [
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
 embassy-time = { version = "0.5.1", features = ["defmt"] }
 
+pwm-pca9685 = "1.0.0"
+
 panic-probe = "0.3.2"

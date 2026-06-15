@@ -9,9 +9,10 @@ use embassy_stm32::adc::{Adc, SampleTime};
 use embassy_stm32::bind_interrupts;
 use embassy_stm32::exti;
 use embassy_stm32::gpio;
+use embassy_stm32::i2c::{I2c, Master};
 use embassy_stm32::interrupt;
 use embassy_stm32::interrupt::InterruptExt;
-use embassy_stm32::mode::Async;
+use embassy_stm32::mode::{Async, Blocking};
 use embassy_stm32::peripherals::ADC1;
 use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
@@ -22,6 +23,8 @@ use {defmt_rtt as _, panic_probe as _};
 
 use stm32_core::fixed::*;
 use stm32_core::joint::{transition, Event, Joint};
+
+use pwm_pca9685::{Address, Channel as ServoChannel, Pca9685};
 
 bind_interrupts!(struct Irqs {
     EXTI0 => exti::InterruptHandler<interrupt::typelevel::EXTI0>;
@@ -167,6 +170,34 @@ async fn task_supervisor(mut led: gpio::Output<'static>) {
     }
 }
 
+#[embassy_executor::task]
+async fn task_servo(i2c: I2c<'static, Blocking, Master>) {
+    // 50 Hz frame: prescale = round(25 MHz / (4096 * 50)) - 1 = 121
+    let mut pwm = unwrap!(Pca9685::new(i2c, Address::default()).ok());
+    unwrap!(pwm.set_prescale(121).ok());
+    unwrap!(pwm.enable().ok());
+
+    // 20 ms period = 4096 counts; 1 ms = 205, 2 ms = 410 (MG996R full travel)
+    const MIN: u16 = 205;
+    const MAX: u16 = 410;
+    const STEP: u16 = 5;
+
+    let mut pulse = MIN;
+    let mut rising = true;
+    loop {
+        unwrap!(pwm.set_channel_on_off(ServoChannel::C15, 0, pulse).ok());
+        Timer::after_millis(20).await;
+
+        if rising {
+            pulse += STEP;
+            rising = pulse < MAX;
+        } else {
+            pulse -= STEP;
+            rising = pulse <= MIN;
+        }
+    }
+}
+
 static EXECUTOR_H: InterruptExecutor = InterruptExecutor::new();
 
 #[interrupt]
@@ -190,6 +221,9 @@ async fn main(spawner: Spawner) {
     let led_blue = gpio::Output::new(p.PD15, gpio::Level::Low, gpio::Speed::Low);
     let adc = Adc::new(p.ADC1);
 
+    // pca9685: scl = pb6, sda = pb7 (default config = 100 kHz)
+    let i2c = I2c::new_blocking(p.I2C1, p.PB6, p.PB7, Default::default());
+
     let mut wdg = IndependentWatchdog::new(p.IWDG, 50_000);
     wdg.unleash();
 
@@ -201,4 +235,5 @@ async fn main(spawner: Spawner) {
     spawner.spawn(unwrap!(task_button(button)));
     spawner.spawn(unwrap!(task_temp(adc)));
     spawner.spawn(unwrap!(task_motion()));
+    spawner.spawn(unwrap!(task_servo(i2c)));
 }
