@@ -5,4 +5,5 @@
 pub mod fixed;
 pub mod joint;
 mod math;
+pub mod servo;
 pub mod temp_convert;
