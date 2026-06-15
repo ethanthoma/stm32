@@ -3,5 +3,6 @@
 #![forbid(unsafe_code)]
 
 pub mod fixed;
+pub mod joint;
 mod math;
 pub mod temp_convert;

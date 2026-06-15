@@ -21,6 +21,7 @@ use embassy_time::{Duration, Ticker, Timer};
 use {defmt_rtt as _, panic_probe as _};
 
 use stm32_core::fixed::*;
+use stm32_core::joint::{transition, Event, Joint};
 
 bind_interrupts!(struct Irqs {
     EXTI0 => exti::InterruptHandler<interrupt::typelevel::EXTI0>;
@@ -63,11 +64,6 @@ async fn task_temp(mut adc: Adc<'static, ADC1>) {
 
         Timer::after_secs(1).await;
     }
-}
-
-enum Joint {
-    Home,
-    Extended,
 }
 
 #[embassy_executor::task]
@@ -159,18 +155,15 @@ async fn task_supervisor(mut led: gpio::Output<'static>) {
     loop {
         CHANNEL.receive().await;
 
-        match state {
-            Joint::Home => {
-                state = Joint::Extended;
-                led.set_high();
-                TARGET.signal(q16::from_int(50));
-            }
-            Joint::Extended => {
-                led.set_low();
-                state = Joint::Home;
-                TARGET.signal(q16::from_int(0));
-            }
+        let (next_state, effect) = transition(state, Event::ButtonPressed);
+        state = next_state;
+
+        if effect.led_high {
+            led.set_high();
+        } else {
+            led.set_low();
         }
+        TARGET.signal(effect.target);
     }
 }
 
