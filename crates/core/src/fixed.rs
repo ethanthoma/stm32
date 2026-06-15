@@ -141,6 +141,61 @@ impl q16 {
         }
     }
 
+    pub open spec fn div_bits(self, other: q16) -> int {
+        if other.val() == 0 {
+            if self.val() > 0 {
+                i32::MAX as int
+            } else if self.val() < 0 {
+                i32::MIN as int
+            } else {
+                0
+            }
+        } else {
+            let raw = if other.val() > 0 {
+                trunc_div(self.val() * ONE as int, other.val())
+            } else {
+                -trunc_div(self.val() * ONE as int, -other.val())
+            };
+            if raw > i32::MAX {
+                i32::MAX as int
+            } else if raw < i32::MIN {
+                i32::MIN as int
+            } else {
+                raw
+            }
+        }
+    }
+
+    #[verifier::nonlinear]
+    pub fn saturating_div(self, other: q16) -> (q: q16)
+        ensures
+            q.val() == self.div_bits(other),
+    {
+        if other.0 == 0 {
+            if self.0 > 0 {
+                q16(i32::MAX)
+            } else if self.0 < 0 {
+                q16(i32::MIN)
+            } else {
+                q16(0)
+            }
+        } else {
+            let num: i64 = self.0 as i64 * ONE as i64;
+            let raw: i64 = if other.0 > 0 {
+                div_trunc(num, other.0 as i64)
+            } else {
+                0 - div_trunc(num, 0 - other.0 as i64)
+            };
+            if raw > i32::MAX as i64 {
+                q16(i32::MAX)
+            } else if raw < i32::MIN as i64 {
+                q16(i32::MIN)
+            } else {
+                q16(raw as i32)
+            }
+        }
+    }
+
     pub open spec fn clamp_bits(self, lo: q16, hi: q16) -> int {
         if self.val() < lo.val() {
             lo.val()
@@ -236,8 +291,30 @@ impl core::ops::Mul for q16 {
     }
 }
 
-} // verus!
+#[cfg(feature = "verus")]
+impl vstd::std_specs::ops::DivSpecImpl for q16 {
+    open spec fn obeys_div_spec() -> bool {
+        true
+    }
 
+    open spec fn div_req(self, rhs: q16) -> bool {
+        true
+    }
+
+    closed spec fn div_spec(self, rhs: q16) -> q16 {
+        q16(self.div_bits(rhs) as i32)
+    }
+}
+
+impl core::ops::Div for q16 {
+    type Output = q16;
+
+    fn div(self, rhs: q16) -> q16 {
+        self.saturating_div(rhs)
+    }
+}
+
+} // verus!
 #[cfg(feature = "defmt")]
 impl defmt::Format for q16 {
     fn format(&self, f: defmt::Formatter) {
