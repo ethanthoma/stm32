@@ -2,6 +2,7 @@
 #![allow(unexpected_cfgs)]
 #![forbid(unsafe_code)]
 
+pub mod feedback;
 pub mod fixed;
 pub mod joint;
 mod math;

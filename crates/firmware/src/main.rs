@@ -13,14 +13,16 @@ use embassy_stm32::i2c::{I2c, Master};
 use embassy_stm32::interrupt;
 use embassy_stm32::interrupt::InterruptExt;
 use embassy_stm32::mode::{Async, Blocking};
-use embassy_stm32::peripherals::ADC1;
+use embassy_stm32::peripherals::{ADC1, ADC2, PA1};
 use embassy_stm32::wdg::IndependentWatchdog;
+use embassy_stm32::Peri;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Ticker, Timer};
 use {defmt_rtt as _, panic_probe as _};
 
+use stm32_core::feedback::pot_position;
 use stm32_core::fixed::*;
 use stm32_core::joint::{transition, Event, Joint};
 use stm32_core::servo::servo_pulse;
@@ -75,18 +77,18 @@ async fn task_temp(mut adc: Adc<'static, ADC1>) {
 async fn task_control(
     mut led: gpio::Output<'static>,
     mut wdg: IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>,
+    mut adc: Adc<'static, ADC2>,
+    mut pot: Peri<'static, PA1>,
 ) {
     const HZ: u64 = 100;
     let mut ticker = Ticker::every(Duration::from_hz(HZ));
     let mut ticks: u32 = 1;
 
     let dt_s = 1.0 / HZ as f32; // seconds per tick
-    let k = q16::from_int(100); // plant gain
     let k_p = q16::from_f32(0.1);
     let k_i = q16::from_f32(0.1);
     let k_d_eff = q16::from_f32(0.01 / dt_s); // K_D / DT
     let dt = q16::from_f32(dt_s);
-    let dt_over_tau = q16::from_f32(dt_s / 2.0); // DT / TAU (TAU = 2 s)
     let lo = q16::from_int(-1);
     let hi = q16::from_int(1);
     let i_lo = q16::from_int(-10);
@@ -94,8 +96,7 @@ async fn task_control(
 
     let mut integral = q16::from_int(0);
     let mut sp = q16::from_int(0);
-    let mut v_prev = q16::from_int(0);
-    let mut v = q16::from_int(0);
+    let mut v = pot_position(adc.blocking_read(&mut pot, SampleTime::CYCLES480));
 
     loop {
         ticker.next().await;
@@ -105,25 +106,25 @@ async fn task_control(
             sp = new_sp;
         }
 
+        let v_now = pot_position(adc.blocking_read(&mut pot, SampleTime::CYCLES480));
+
+        let e = sp - v_now;
+        integral = (integral + e * dt).clamp(i_lo, i_hi);
+
+        let p = k_p * e;
+        let i = k_i * integral;
+        let d = k_d_eff * (v - v_now);
+        let u = (p + i + d).clamp(lo, hi);
+
         if ticks.is_multiple_of(5) {
-            info!("sp = {}; v = {}", sp, v);
+            info!("sp = {}; v = {}; u = {}", sp, v_now, u);
         }
 
         if ticks.is_multiple_of(50) {
             led.toggle();
         }
 
-        let e = sp - v;
-        integral = (integral + e * dt).clamp(i_lo, i_hi);
-
-        let p = k_p * e;
-        let i = k_i * integral;
-        let d = k_d_eff * (v_prev - v);
-        let u = (p + i + d).clamp(lo, hi);
-
-        v_prev = v;
-        v = v + (k * u - v) * dt_over_tau;
-
+        v = v_now;
         ticks = ticks.wrapping_add(1);
     }
 }
@@ -224,6 +225,7 @@ async fn main(spawner: Spawner) {
     let led_green = gpio::Output::new(p.PD12, gpio::Level::Low, gpio::Speed::Low);
     let led_blue = gpio::Output::new(p.PD15, gpio::Level::Low, gpio::Speed::Low);
     let adc = Adc::new(p.ADC1);
+    let pot_adc = Adc::new(p.ADC2);
 
     let i2c = I2c::new_blocking(p.I2C1, p.PB6, p.PB7, Default::default());
 
@@ -232,7 +234,7 @@ async fn main(spawner: Spawner) {
 
     EXECUTOR_H
         .start(interrupt::UART4)
-        .spawn(unwrap!(task_control(led_blue, wdg)));
+        .spawn(unwrap!(task_control(led_blue, wdg, pot_adc, p.PA1)));
 
     spawner.spawn(unwrap!(task_supervisor(led_green)));
     spawner.spawn(unwrap!(task_button(button)));
