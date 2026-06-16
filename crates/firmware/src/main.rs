@@ -13,16 +13,14 @@ use embassy_stm32::i2c::{I2c, Master};
 use embassy_stm32::interrupt;
 use embassy_stm32::interrupt::InterruptExt;
 use embassy_stm32::mode::{Async, Blocking};
-use embassy_stm32::peripherals::{ADC1, ADC2, PA1};
+use embassy_stm32::peripherals::ADC1;
 use embassy_stm32::wdg::IndependentWatchdog;
-use embassy_stm32::Peri;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Ticker, Timer};
 use {defmt_rtt as _, panic_probe as _};
 
-use stm32_core::feedback::pot_position;
 use stm32_core::fixed::*;
 use stm32_core::joint::{transition, Event, Joint};
 use stm32_core::servo::servo_pulse;
@@ -31,9 +29,10 @@ use pwm_pca9685::{Address, Channel as ServoChannel, Pca9685};
 
 bind_interrupts!(struct Irqs {
     EXTI0 => exti::InterruptHandler<interrupt::typelevel::EXTI0>;
+    EXTI2 => exti::InterruptHandler<interrupt::typelevel::EXTI2>;
 });
 
-static CHANNEL: Channel<ThreadModeRawMutex, (), 4> = Channel::new();
+static CHANNEL: Channel<ThreadModeRawMutex, Event, 4> = Channel::new();
 static SETPOINT: Signal<CriticalSectionRawMutex, q16> = Signal::new();
 static TARGET: Signal<ThreadModeRawMutex, q16> = Signal::new();
 static SERVO_SP: Signal<ThreadModeRawMutex, q16> = Signal::new();
@@ -43,8 +42,23 @@ async fn task_button(mut button: exti::ExtiInput<'static, Async>) {
     loop {
         button.wait_for_rising_edge().await;
         info!("pressed!");
-        CHANNEL.send(()).await;
+        CHANNEL.send(Event::ButtonPressed).await;
         Timer::after_millis(20).await;
+        button.wait_for_falling_edge().await;
+        Timer::after_millis(20).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn task_estop(mut button: exti::ExtiInput<'static, Async>) {
+    loop {
+        button.wait_for_rising_edge().await;
+        Timer::after_millis(5).await;
+        if button.is_low() {
+            continue;
+        }
+        warn!("e-stop!");
+        CHANNEL.send(Event::Estop).await;
         button.wait_for_falling_edge().await;
         Timer::after_millis(20).await;
     }
@@ -77,18 +91,18 @@ async fn task_temp(mut adc: Adc<'static, ADC1>) {
 async fn task_control(
     mut led: gpio::Output<'static>,
     mut wdg: IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>,
-    mut adc: Adc<'static, ADC2>,
-    mut pot: Peri<'static, PA1>,
 ) {
     const HZ: u64 = 100;
     let mut ticker = Ticker::every(Duration::from_hz(HZ));
     let mut ticks: u32 = 1;
 
     let dt_s = 1.0 / HZ as f32; // seconds per tick
+    let k = q16::from_int(100); // plant gain
     let k_p = q16::from_f32(0.1);
     let k_i = q16::from_f32(0.1);
     let k_d_eff = q16::from_f32(0.01 / dt_s); // K_D / DT
     let dt = q16::from_f32(dt_s);
+    let dt_over_tau = q16::from_f32(dt_s / 2.0); // DT / TAU (TAU = 2 s)
     let lo = q16::from_int(-1);
     let hi = q16::from_int(1);
     let i_lo = q16::from_int(-10);
@@ -96,7 +110,8 @@ async fn task_control(
 
     let mut integral = q16::from_int(0);
     let mut sp = q16::from_int(0);
-    let mut v = pot_position(adc.blocking_read(&mut pot, SampleTime::CYCLES480));
+    let mut v_prev = q16::from_int(0);
+    let mut v = q16::from_int(0);
 
     loop {
         ticker.next().await;
@@ -106,25 +121,25 @@ async fn task_control(
             sp = new_sp;
         }
 
-        let v_now = pot_position(adc.blocking_read(&mut pot, SampleTime::CYCLES480));
-
-        let e = sp - v_now;
-        integral = (integral + e * dt).clamp(i_lo, i_hi);
-
-        let p = k_p * e;
-        let i = k_i * integral;
-        let d = k_d_eff * (v - v_now);
-        let u = (p + i + d).clamp(lo, hi);
-
         if ticks.is_multiple_of(5) {
-            info!("sp = {}; v = {}; u = {}", sp, v_now, u);
+            info!("sp = {}; v = {}", sp, v);
         }
 
         if ticks.is_multiple_of(50) {
             led.toggle();
         }
 
-        v = v_now;
+        let e = sp - v;
+        integral = (integral + e * dt).clamp(i_lo, i_hi);
+
+        let p = k_p * e;
+        let i = k_i * integral;
+        let d = k_d_eff * (v_prev - v);
+        let u = (p + i + d).clamp(lo, hi);
+
+        v_prev = v;
+        v = v + (k * u - v) * dt_over_tau;
+
         ticks = ticks.wrapping_add(1);
     }
 }
@@ -157,12 +172,17 @@ async fn task_motion() {
 }
 
 #[embassy_executor::task]
-async fn task_supervisor(mut led: gpio::Output<'static>) {
+async fn task_supervisor(
+    mut led: gpio::Output<'static>,
+    mut fault_led: gpio::Output<'static>,
+    mut oe: gpio::Output<'static>,
+) {
     let mut state = Joint::Home;
+    oe.set_low();
     loop {
-        CHANNEL.receive().await;
+        let event = CHANNEL.receive().await;
 
-        let (next_state, effect) = transition(state, Event::ButtonPressed);
+        let (next_state, effect) = transition(state, event);
         state = next_state;
 
         if effect.led_high {
@@ -170,6 +190,15 @@ async fn task_supervisor(mut led: gpio::Output<'static>) {
         } else {
             led.set_low();
         }
+
+        if effect.enabled {
+            oe.set_low();
+            fault_led.set_low();
+        } else {
+            oe.set_high();
+            fault_led.set_high();
+        }
+
         TARGET.signal(effect.target);
     }
 }
@@ -222,10 +251,12 @@ async fn main(spawner: Spawner) {
 
     // pd12 = green, pd13 = orange, pd14 = red, pd15 = blue
     let button = exti::ExtiInput::new(p.PA0, p.EXTI0, gpio::Pull::Down, Irqs);
+    let estop = exti::ExtiInput::new(p.PA2, p.EXTI2, gpio::Pull::Down, Irqs);
     let led_green = gpio::Output::new(p.PD12, gpio::Level::Low, gpio::Speed::Low);
+    let led_red = gpio::Output::new(p.PD14, gpio::Level::Low, gpio::Speed::Low);
     let led_blue = gpio::Output::new(p.PD15, gpio::Level::Low, gpio::Speed::Low);
+    let oe = gpio::Output::new(p.PD8, gpio::Level::High, gpio::Speed::Low);
     let adc = Adc::new(p.ADC1);
-    let pot_adc = Adc::new(p.ADC2);
 
     let i2c = I2c::new_blocking(p.I2C1, p.PB6, p.PB7, Default::default());
 
@@ -234,10 +265,11 @@ async fn main(spawner: Spawner) {
 
     EXECUTOR_H
         .start(interrupt::UART4)
-        .spawn(unwrap!(task_control(led_blue, wdg, pot_adc, p.PA1)));
+        .spawn(unwrap!(task_control(led_blue, wdg)));
 
-    spawner.spawn(unwrap!(task_supervisor(led_green)));
+    spawner.spawn(unwrap!(task_supervisor(led_green, led_red, oe)));
     spawner.spawn(unwrap!(task_button(button)));
+    spawner.spawn(unwrap!(task_estop(estop)));
     spawner.spawn(unwrap!(task_temp(adc)));
     spawner.spawn(unwrap!(task_motion()));
     spawner.spawn(unwrap!(task_servo(i2c)));
