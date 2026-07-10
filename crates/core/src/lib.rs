@@ -6,5 +6,6 @@ pub mod feedback;
 pub mod fixed;
 pub mod joint;
 mod math;
+pub mod motion;
 pub mod servo;
 pub mod temp_convert;

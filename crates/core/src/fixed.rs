@@ -220,6 +220,44 @@ impl q16 {
             q16(self.0)
         }
     }
+
+    pub open spec fn min_bits(self, other: q16) -> int {
+        if self.val() <= other.val() {
+            self.val()
+        } else {
+            other.val()
+        }
+    }
+
+    pub fn min(self, other: q16) -> (q: q16)
+        ensures
+            q.val() == self.min_bits(other),
+    {
+        if self.0 <= other.0 {
+            q16(self.0)
+        } else {
+            q16(other.0)
+        }
+    }
+
+    pub fn sqrt(self) -> (r: q16)
+        requires
+            self.val() >= 0,
+        ensures
+            r.val() >= 0,
+            r.val() * r.val() <= self.val() * ONE,
+            self.val() * ONE < (r.val() + 1) * (r.val() + 1),
+    {
+        let n: u64 = self.0 as u64 * ONE as u64;
+        assert(n == self.val() * ONE);
+        let root: u64 = isqrt(n);
+        assert(root <= 0x7FFF_FFFF) by (nonlinear_arith)
+            requires
+                root * root <= n,
+                n <= 0x7FFF_FFFFu64 * ONE as u64,
+        ;
+        q16(root as i32)
+    }
 }
 
 #[cfg(feature = "verus")]
