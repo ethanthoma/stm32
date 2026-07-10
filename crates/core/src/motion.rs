@@ -3,7 +3,7 @@ use verus_builtin_macros::verus;
 #[cfg(feature = "verus")]
 use vstd::prelude::*;
 
-use crate::fixed::q16;
+use crate::fixed::{q16, ONE};
 
 verus! {
 
@@ -57,6 +57,36 @@ pub fn velocity(done: q16, ramp: q16, total: q16, v_max: q16) -> (v: q16)
         );
     }
     v
+}
+
+pub fn step_interval(velocity: q16, velocity_min: q16, timer_hz: u32) -> (ticks: u64)
+    requires
+        velocity_min.val() > 0,
+        velocity.val() >= 0,
+        velocity.val() <= timer_hz as int * ONE as int,
+        velocity_min.val() <= timer_hz as int * ONE as int,
+    ensures
+        1 <= ticks,
+        ticks <= timer_hz as int * ONE as int / velocity_min.val(),
+{
+    let denom: i32 = if velocity.to_bits() >= velocity_min.to_bits() {
+        velocity.to_bits()
+    } else {
+        velocity_min.to_bits()
+    };
+    let num: u64 = timer_hz as u64 * ONE as u64;
+    let ticks: u64 = num / denom as u64;
+    proof {
+        assert(num as int == timer_hz as int * ONE as int);
+        vstd::arithmetic::div_mod::lemma_div_is_ordered_by_denominator(
+            num as int,
+            velocity_min.val(),
+            denom as int,
+        );
+        vstd::arithmetic::div_mod::lemma_div_is_ordered(denom as int, num as int, denom as int);
+        vstd::arithmetic::div_mod::lemma_div_by_self(denom as int);
+    }
+    ticks
 }
 
 } // verus!
