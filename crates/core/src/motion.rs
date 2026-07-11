@@ -7,32 +7,45 @@ use crate::fixed::{q16, ONE};
 
 verus! {
 
-pub fn velocity_sq_frac(done: q16, ramp: q16, total: q16) -> (v: q16)
+pub fn velocity_sq_frac(done: u32, total: u32, ramp: u32) -> (v: q16)
+    requires
+        ramp > 0,
+        done <= total,
     ensures
-        0 <= v.val() <= crate::fixed::ONE,
+        0 <= v.val() <= ONE,
 {
-    let zero = q16::from_int(0);
-    let full = q16::from_int(1);
-
-    let accel = (done / ramp).clamp(zero, full);
-    let decel = ((total - done) / ramp).clamp(zero, full);
-
-    accel.min(decel)
+    let accel: i64 = done as i64 * ONE as i64 / ramp as i64;
+    let decel: i64 = (total - done) as i64 * ONE as i64 / ramp as i64;
+    let m: i64 = if accel <= decel {
+        accel
+    } else {
+        decel
+    };
+    let bits: i64 = if m < 0 {
+        0
+    } else if m > ONE as i64 {
+        ONE as i64
+    } else {
+        m
+    };
+    q16::from_bits(bits as i32)
 }
 
-pub fn velocity(done: q16, ramp: q16, total: q16, v_max: q16) -> (v: q16)
+pub fn velocity(done: u32, total: u32, ramp: u32, v_max: q16) -> (v: q16)
     requires
+        ramp > 0,
+        done <= total,
         v_max.val() >= 0,
     ensures
         0 <= v.val() <= v_max.val(),
 {
-    let frac = velocity_sq_frac(done, ramp, total);
+    let frac = velocity_sq_frac(done, total, ramp);
     let scale = frac.sqrt();
-    assert(0 <= scale.val() <= crate::fixed::ONE) by (nonlinear_arith)
+    assert(0 <= scale.val() <= ONE) by (nonlinear_arith)
         requires
             scale.val() >= 0,
-            scale.val() * scale.val() <= frac.val() * crate::fixed::ONE,
-            frac.val() <= crate::fixed::ONE,
+            scale.val() * scale.val() <= frac.val() * ONE,
+            frac.val() <= ONE,
     ;
     let v = v_max.saturating_mul(scale);
     proof {
@@ -41,20 +54,17 @@ pub fn velocity(done: q16, ramp: q16, total: q16, v_max: q16) -> (v: q16)
                 v_max.val() >= 0,
                 scale.val() >= 0,
         ;
-        assert(v_max.val() * scale.val() <= crate::fixed::ONE * v_max.val()) by (nonlinear_arith)
+        assert(v_max.val() * scale.val() <= ONE * v_max.val()) by (nonlinear_arith)
             requires
                 v_max.val() >= 0,
-                scale.val() <= crate::fixed::ONE,
+                scale.val() <= ONE,
         ;
         vstd::arithmetic::div_mod::lemma_multiply_divide_le(
             v_max.val() * scale.val(),
-            crate::fixed::ONE as int,
+            ONE as int,
             v_max.val(),
         );
-        vstd::arithmetic::div_mod::lemma_div_pos_is_pos(
-            v_max.val() * scale.val(),
-            crate::fixed::ONE as int,
-        );
+        vstd::arithmetic::div_mod::lemma_div_pos_is_pos(v_max.val() * scale.val(), ONE as int);
     }
     v
 }
@@ -87,6 +97,37 @@ pub fn step_interval(velocity: q16, velocity_min: q16, timer_hz: u32) -> (ticks:
         vstd::arithmetic::div_mod::lemma_div_by_self(denom as int);
     }
     ticks
+}
+
+#[derive(Clone, Copy)]
+pub struct MoveParams {
+    pub total: u32,
+    pub ramp: u32,
+    pub v_max: q16,
+    pub v_min: q16,
+    pub timer_hz: u32,
+}
+
+impl MoveParams {
+    pub open spec fn wf(self) -> bool {
+        &&& self.ramp > 0
+        &&& self.v_min.val() > 0
+        &&& self.v_max.val() >= 0
+        &&& self.v_max.val() <= self.timer_hz as int * ONE as int
+        &&& self.v_min.val() <= self.timer_hz as int * ONE as int
+    }
+}
+
+pub fn step_at(params: MoveParams, done: u32) -> (ticks: u64)
+    requires
+        params.wf(),
+        done <= params.total,
+    ensures
+        1 <= ticks,
+        ticks <= params.timer_hz as int * ONE as int / params.v_min.val(),
+{
+    let v = velocity(done, params.total, params.ramp, params.v_max);
+    step_interval(v, params.v_min, params.timer_hz)
 }
 
 } // verus!
